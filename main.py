@@ -17,71 +17,192 @@ import logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                      level=logging.INFO)
 
+import time
+import datetime
 
-categories = ["Стоматология", "Педиатрия", "Магия"]
+
+## contstructing UI
+
+# categories 
+categories = ["Психология", "Гинекология", "Грудное вскармливание"]
 other = ["Другое"]
+
+def parse_faq(text):
+    return [tuple(e.split("\n", 1)) for e in text.split("\n\n")]
+
+def faq_from_txt(filename):
+    return parse_faq(open(filename+".txt").read())
+
+FAQ = {
+    "Психология": faq_from_txt('psychology'),
+    "Гинекология": faq_from_txt('gynecology'),
+    "Грудное вскармливание": faq_from_txt('breast_feeding')
+    }
+
+
+# buttons
+
 cancel = ["Отмена"]
 ready = ["✅ Готово"]
 remove_mark = "❌ "
+ok = "Понятно"
 
-menu = [("faq", "Частые вопросы"),
-        ("expert", "Задать вопрос специалисту"),
-        ("contacts", "Контакты специалистов"),
-        ("subscription", "Информация о подписке")]
+def ok_keyboard(data):
+    return InlineKeyboardMarkup.from_button(InlineKeyboardButton(text=ok, callback_data=data))
 
-menu_dict = dict(menu)
-menu_list = list(map(lambda p: p[1], menu))
+# menu
 
-CATEGORY, QUESTION, FORWARD = range(3)
+menu = [
+    {
+        'type': "faq", 
+        'text': "Частые вопросы",
+        'subscription': False
+    }, {
+        'type': "expert",
+        'text': "Задать вопрос специалисту",
+        'subscription': True
+    }, {
+        'type': "contacts",
+        'text': "Контакты специалистов",
+        'subscription': False
+    }, {
+        'type': "feedback",
+        'text': "Обратная связь",
+        'subscription': False
+    }
+]
 
-# start message
+def keyboard_from_list(buttons):
+    group_menu = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    return ReplyKeyboardMarkup(group_menu, one_time_keyboard=True)
+
+menu_dict = {e['type']:e for e in menu}
+
+def menu_keyboard(subscription):
+    menu_list = [e['text'] for e in filter(lambda e: (not e['subscription']) or subscription['active'], menu)]
+    return keyboard_from_list(menu_list)
+
+def menu_handler(menu_type, manually=False):
+    option = menu_dict[menu_type]
+    def wrapper(callback):
+        if option['subscription']:
+            def new_cb(update, context):
+                user_id = update.message.from_user.id
+                sub = db.check_subscription(user_id)
+                if sub['active']:
+                    return callback(update, context)
+                else:
+                    bot.send_message(chat_id=update.effective_chat.id,
+                        text="wrapper\n" + subscription_end_message,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=menu_keyboard(sub))
+                    return ConversationHandler.END
+        else:
+            new_cb = callback
+        handler = MessageHandler(Filters.text([option['text']]), new_cb)
+        if not manually: dp.add_handler(handler)
+        return handler
+    return wrapper
+
+# hello and scubscription
+
+intro_message = "Привет, New Mama! Я твой помощник в общении с нашими экспертами. " +\
+                "В течение месяца ты можешь смело задавать свои вопросы, а я переадресую их специалисту. " +\
+                "По завершении *30 дней* подписка деактивируется, но ты всегда можешь обратиться за личной " +\
+                "консультацией напрямую к нашим экспертам!"
+
+hello_again = "Рады видеть тебя снова в нашем приложении."
+
+subscription_end_message = "К сожалению, 30-дневная подписка на чат-бот *истекла*. " +\
+                "Но ты можешь напрямую обратиться к специалистам за личной консультацией! " +\
+                "Их контакты можно найти в меню."
+
+def subscription_info(sub):
+    if sub["active"]:
+        return f"Ваша подписка будет действовать еще " +\
+            f"*{sub['days']} {'дней' if sub['days'] >= 5 else 'дня' if sub['days'] >=2 else 'день'}*"
+    else:
+         return subscription_end_message
+
+
 def hello(update, context):
+    user = update.message.from_user
+    sub = db.check_subscription(user.id)
+    if sub:
+        text = hello_again + " " + subscription_info(sub)
+    else:
+        db.new_user(user)
+        sub = db.subscribe_user(user.id, 31)
+        text = intro_message
     bot.send_message(chat_id=update.effective_chat.id,
-                     text="Здравствуйте! Я бот-помощник для молодых мам. Я могу вам чем-то помочь?",
-                     reply_markup=ReplyKeyboardMarkup.from_column(menu_list, one_time_keyboard=True))
+                    text=text,
+                    reply_markup=menu_keyboard(sub),
+                    parse_mode=ParseMode.MARKDOWN
+                    )
 
 # show menu again
 def menu_again(update, context):
-        bot.send_message(chat_id=update.effective_chat.id,
-                     text="Я помочь вам чем-то еще?",
-                     reply_markup=ReplyKeyboardMarkup.from_column(menu_list, one_time_keyboard=True))
+        show_menu(update.effective_chat.id)
         return ConversationHandler.END
+
+def show_menu(chat_id):
+    sub = db.check_subscription(chat_id)
+    bot.send_message(chat_id=chat_id,
+                     text="Я могу помочь чем-то еще?",
+                     reply_markup=menu_keyboard(sub))
 
 
 dp.add_handler(CommandHandler('start', hello))
 
 ## ask expert scenario
 
+CATEGORY, QUESTION, FORWARD = range(3)
+
+MAX_QUESTIONS = 99
+
 def ask_expert(update, context):
-    bot.send_message(chat_id=update.effective_chat.id,
+    questions = db.last_questions(update.message.from_user.id)
+    if len(questions) < MAX_QUESTIONS:
+        bot.send_message(chat_id=update.effective_chat.id,
                      text="Выберите категорию специалиста, к которому вы хотите обратиться:",
-                     reply_markup=ReplyKeyboardMarkup.from_column(categories+other+cancel, one_time_keyboard=True))
-    return CATEGORY
+                     reply_markup=keyboard_from_list(categories+other+cancel))
+        return CATEGORY
+    else:
+        bot.send_message(chat_id=update.effective_chat.id,
+                         text="Наши эксперты обрабатывают твой вопрос, им нужно немного времени! " +\
+                              "Новый вопрос ты можешь задать уже завтра.")
+        time.sleep(5)
+        return menu_again(update, context)
 
 
 def accept_category(update, context):
     context.user_data["category"] = update.message.text
     update.message.reply_text("Введите и отправьте ваш вопрос:", 
-                              reply_markup=ReplyKeyboardMarkup([cancel], one_time_keyboard=True))
+                              reply_markup=keyboard_from_list(cancel))
     return QUESTION
 
 
-def forward_to_expert(update, context):
-    category = context.user_data["category"]
+def remind_experts(category):
     experts_usernames = filter(bool, map(lambda d: d.get("username"), db.experts_within(category)))
     experts_usertags = list(map(lambda un: "@"+un, experts_usernames))
+    return f"Обратите внимание: {' '.join(experts_usertags)} !" if experts_usertags else ""
+
+def forward_to_expert(update, context):
+    category = context.user_data["category"]
+    
     bot.send_message(chat_id=config.data.experts_chat,
                      text=f"Запрос категории *{category}*. " + \
-                     (f"Обратите внимание: {' '.join(experts_usertags)} !" if experts_usertags else ""),
+                          remind_experts(category),
                      parse_mode=ParseMode.MARKDOWN)
-    update.message.forward(config.data.experts_chat)
+    forwarded = update.message.forward(config.data.experts_chat)
+    db.add_new_question(category, update.message, forwarded)
     update.message.reply_text("Спасибо, специалисты получили ваш вопрос и изучат его. Ждите ответа в ближайшую среду")
     return menu_again(update, context)
 
 
 dp.add_handler(
     ConversationHandler(
-        entry_points=[MessageHandler(Filters.text([menu_dict["expert"]]), ask_expert)],
+        entry_points=[menu_handler('expert', manually=True)(ask_expert)],
 
         states={
             CATEGORY: [MessageHandler(Filters.text(categories+other), accept_category)],
@@ -113,39 +234,110 @@ def reply_to_user(update, context):
     if not expert:
         update.message.reply_text("Сначала зарегистрируйтесь как специалист используя команду /register !")
     else:
-        chat_asked_id = update.message.reply_to_message.forward_from.id
+        forwarded = update.message.reply_to_message
+        chat_asked_id = forwarded.forward_from.id
+        db.add_answer(forwarded.message_id, update.message)
         bot.send_message(chat_id=chat_asked_id,
                          text="*Ответ специалиста:*\n"+update.message.text,
                          parse_mode=ParseMode.MARKDOWN)
         bot.send_message(chat_id=chat_asked_id,
                          text="*Информация о специалисте:*\n"+expert["info"],
+                         reply_markup=ok_keyboard(f'read_{update.message.messge_id}'),
                          parse_mode=ParseMode.MARKDOWN)
 
 
 dp.add_handler(MessageHandler(Filters.chat(int(config.data.experts_chat)) & ReplyToBotForwardedFilter, reply_to_user))
 
-## other menu options
+def ok_menu(update, context):
+    update.callback_query.answer()
+    data = update.callback_query.data
+    if data.startswith('read'):
+        db.check_read_answer(data.split('_')[1])
+    show_menu(update.effective_chat.id)
 
+dp.add_handler(CallbackQueryHandler(ok_menu, pattern="^ok$"))
+
+
+## contacts
+
+@menu_handler('contacts')
 def contacts(update, context):
     experts = db.all_experts()
-    print(list(experts))
     update.message.reply_text(
                      text="\n\n".join(map(lambda d: d["info"], experts)),
                      parse_mode=ParseMode.MARKDOWN)
+    time.sleep(8)
     return menu_again(update, context)
+
+
+## FAQ
+
+FAQ_CATEGORY = 123
 
 def faq(update, context):
-    update.message.reply_text("здесь будет текст")
+    bot.send_message(chat_id=update.effective_chat.id,
+                 text="Выберите категорию, в которой вас интересует вопрос:",
+                 reply_markup=keyboard_from_list(categories+cancel))
+    return FAQ_CATEGORY
+
+def faq_of_category(update, context):
+    category = update.message.text
+    text = ""
+    for question, answer in FAQ[category]:
+        text += f"*{question}*\n{answer}\n\n"
+    bot.send_message(chat_id=update.effective_chat.id,
+                     text=text,
+                     parse_mode=ParseMode.MARKDOWN)
+    time.sleep(15)
     return menu_again(update, context)
 
-def subscription(update, context):
-    #todo
-    update.message.reply_text("todo")
+
+dp.add_handler(
+    ConversationHandler(
+        entry_points=[menu_handler('faq', manually=True)(faq)],
+
+        states={
+            FAQ_CATEGORY: [MessageHandler(Filters.text(categories), faq_of_category)]
+        },
+
+        fallbacks=[MessageHandler(Filters.text(cancel), menu_again),
+                   CommandHandler("start", menu_again)]
+    )
+)
+
+## Feedback
+
+ENTER_FEEDBACK = 234
+
+def feedback(update, context):
+    update.message.reply_text("Здесь можно сообщить обо всех проблемах с сервисом. " +\
+                              "Введите сообщение:",
+                              reply_markup=ReplyKeyboardMarkup.from_row(cancel))
+    return ENTER_FEEDBACK
+
+def proceed_feedback(update, context):
+    update.message.forward(config.data.admin_chat)
+    update.message.reply_text("Администраторы бота получили сообщение, спасибо! " +\
+        "Мы свяжемся с вами при необходимости.")
+    time.sleep(5)
     return menu_again(update, context)
 
-dp.add_handler(MessageHandler(Filters.text([menu_dict["contacts"]]), contacts))
-dp.add_handler(MessageHandler(Filters.text([menu_dict["faq"]]), faq))
-dp.add_handler(MessageHandler(Filters.text([menu_dict["subscription"]]), subscription))
+def wrong_feedback(update, context):
+    update.message.reply_text("К сожалению я не могу отправить это. Сообщение должно быть текстовым")
+    time.sleep(5)
+    return menu_again(update, context)
+
+dp.add_handler(ConversationHandler(
+    entry_points=[menu_handler('feedback', manually=True)(feedback)],
+
+    states={
+        ENTER_FEEDBACK: [MessageHandler(Filters.text & ~Filters.text(cancel), proceed_feedback), 
+                         MessageHandler(Filters.all & ~Filters.text(cancel), wrong_feedback)]
+    },
+
+    fallbacks=[MessageHandler(Filters.text(cancel), menu_again)]
+))
+
 
 ## expert regestration
 
@@ -221,12 +413,51 @@ def new_experts(update, context):
 dp.add_handler(MessageHandler(Filters.status_update.new_chat_members & Filters.chat(int(config.data.experts_chat)), new_experts))
 
 
-# dev tools
+## answer notification
+
+def remind_unanswered():
+    questions = db.unanswered_questions()
+    for category in categories+other:
+        category_questions = list(filter(lambda q: q['category'] == category, questions))
+        if category_questions:
+            bot.send_message(chat_id=config.data.experts_chat,
+                             text=f"Вопросы без ответа категории *{category}*." +\
+                                  remind_experts(category),
+                             parse_mode=ParseMode.MARKDOWN)
+            for question in category_questions:
+                bot.forward_message(chat_id=config.data.experts_chat,
+                                    from_chat_id=config.data.experts_chat,
+                                    message_id=question['forwarded_id'])
+
+
+upd.job_queue.run_daily(lambda c: remind_unanswered(), datetime.time(hour=12))
+
+## admin tools
 def say_chat_id(update, context):
     update.message.reply_text(update.message.chat_id)
 
-dp.add_handler(CommandHandler('chatid', say_chat_id))
+#dp.add_handler(CommandHandler('chatid', say_chat_id))
 
+
+def unanswered(update, context):
+    update.message.reply_text(f"```\n{db.unanswered_questions()}\n```",
+        parse_mode=ParseMode.MARKDOWN)
+
+dp.add_handler(CommandHandler('unanswered', unanswered, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('remind', lambda u, c: remind_unanswered(), filters=Filters.chat(config.data.admin_chat)))
+
+def remove_expert(update, context):
+    for username in filter(lambda w: w.startswith('@'), update.message.text.split()):
+        db.remove_expert(username)
+    update.message.reply_text('done')
+
+dp.add_handler(CommandHandler('remove', remove_expert, filters=Filters.chat(config.data.admin_chat)))
+
+def experts(update, context):
+    update.message.reply_text(f"```\n{db.all_experts()}\n```",
+        parse_mode=ParseMode.MARKDOWN)
+
+dp.add_handler(CommandHandler('experts', experts, filters=Filters.chat(config.data.admin_chat)))
 
 
 def main():
