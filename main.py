@@ -43,6 +43,7 @@ FAQ = {
 # buttons
 
 cancel = ["Отмена"]
+menu_return = ["Вернуться"]
 ready = ["✅ Готово"]
 remove_mark = "❌ "
 ok = "Понятно"
@@ -196,7 +197,7 @@ def forward_to_expert(update, context):
                      parse_mode=ParseMode.MARKDOWN)
     forwarded = update.message.forward(config.data.experts_chat)
     db.add_new_question(category, update.message, forwarded)
-    update.message.reply_text("Спасибо, специалисты получили ваш вопрос и изучат его. Ждите ответа в ближайшую среду")
+    update.message.reply_text("Спасибо, специалисты получили ваш вопрос и изучат его. ждите ответа в ближайшее время!")
     return menu_again(update, context)
 
 
@@ -242,20 +243,21 @@ def reply_to_user(update, context):
                          parse_mode=ParseMode.MARKDOWN)
         bot.send_message(chat_id=chat_asked_id,
                          text="*Информация о специалисте:*\n"+expert["info"],
-                         reply_markup=ok_keyboard(f'read_{update.message.messge_id}'),
+                         reply_markup=ok_keyboard(f'read_{update.message.message_id}'),
                          parse_mode=ParseMode.MARKDOWN)
 
 
 dp.add_handler(MessageHandler(Filters.chat(int(config.data.experts_chat)) & ReplyToBotForwardedFilter, reply_to_user))
 
-def ok_menu(update, context):
+def get_answer(update, context):
     update.callback_query.answer()
     data = update.callback_query.data
     if data.startswith('read'):
-        db.check_read_answer(data.split('_')[1])
+        db.check_read_answer(int(data.split('_')[1]))
+    print(int(data.split('_')[1]))
     show_menu(update.effective_chat.id)
 
-dp.add_handler(CallbackQueryHandler(ok_menu, pattern="^ok$"))
+dp.add_handler(CallbackQueryHandler(get_answer, pattern="^read"))
 
 
 ## contacts
@@ -276,7 +278,7 @@ FAQ_CATEGORY = 123
 
 def faq(update, context):
     bot.send_message(chat_id=update.effective_chat.id,
-                 text="Выберите категорию, в которой вас интересует вопрос:",
+                 text="Выберите категорию, в которой тебя интересует вопрос:",
                  reply_markup=keyboard_from_list(categories+cancel))
     return FAQ_CATEGORY
 
@@ -287,9 +289,9 @@ def faq_of_category(update, context):
         text += f"*{question}*\n{answer}\n\n"
     bot.send_message(chat_id=update.effective_chat.id,
                      text=text,
-                     parse_mode=ParseMode.MARKDOWN)
-    time.sleep(15)
-    return menu_again(update, context)
+                     parse_mode=ParseMode.MARKDOWN,
+                     reply_markup=keyboard_from_list(categories+menu_return))
+    return FAQ_CATEGORY
 
 
 dp.add_handler(
@@ -300,7 +302,7 @@ dp.add_handler(
             FAQ_CATEGORY: [MessageHandler(Filters.text(categories), faq_of_category)]
         },
 
-        fallbacks=[MessageHandler(Filters.text(cancel), menu_again),
+        fallbacks=[MessageHandler(Filters.text(cancel+menu_return), menu_again),
                    CommandHandler("start", menu_again)]
     )
 )
@@ -360,29 +362,23 @@ def column_keyboard(options):
 def start_register(update, context):
     context.user_data["expert_categories"] = list()
     d = display_text_and_options(context.user_data["expert_categories"])
-    update.message.reply_text(d["text"],
-                              reply_markup=column_keyboard(d["options"]))
+    update.message.reply_text("Выберите свою категорию",
+                              reply_markup=column_keyboard(categories+cancel))
     return CHOOSE_CATEGORIES
 
 def categories_button(update, context):
     query = update.callback_query
     query.answer()
-    if query.data in ready:
-        return ask_info(update, context)
-    elif query.data.startswith(remove_mark):
-        context.user_data["expert_categories"].remove(query.data[len(remove_mark):])
+    if query.data in cancel:
+        query.message.delete()
+        return ConversationHandler.END
     else:
         context.user_data["expert_categories"].append(query.data)
-    d = display_text_and_options(context.user_data["expert_categories"])
-    query.edit_message_text(text=d["text"],
-                            reply_markup=column_keyboard(d["options"]))
-    return CHOOSE_CATEGORIES
-
-def ask_info(update, context):
-    bot.send_message(chat_id=update.effective_chat.id,
-                     text="Введите одним сообщением информацию о себе и контактные данные. " +\
-                     "Она будет отображаться пользователям каждый раз когда вы будете отвечать на их вопросы, а также будет указана в блоке контактов.")
-    return SAVE_INFO
+        query.message.edit_text(f"Ваша категория: *{query.data}* \n\n" +\
+            "Введите одним сообщением информацию о себе и контактные данные. " +\
+            "Она будет отображаться пользователям каждый раз, когда вы будете отвечать на их вопросы, а также будет указана в блоке контактов.",
+            parse_mode=ParseMode.MARKDOWN)
+        return SAVE_INFO
 
 def save_info(update, context):
     db.update_expert(update.effective_user, context.user_data["expert_categories"], update.message.text)
