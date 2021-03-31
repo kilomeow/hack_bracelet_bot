@@ -468,7 +468,7 @@ def experts(update, context):
 
 dp.add_handler(CommandHandler('experts', experts, filters=Filters.chat(config.data.admin_chat)))
 
-def user(update, context):
+def userinfo(update, context):
     for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
         update.message.reply_text(f"```\n{pretty_single(db.get_user_by_username(usertag[1:]))}\n```",
             parse_mode=ParseMode.MARKDOWN)
@@ -487,8 +487,20 @@ def users(update, context):
         update.message.reply_text(f"```\n{pretty(users_list[i:i+5])}\n```",
             parse_mode=ParseMode.MARKDOWN)
 
-dp.add_handler(CommandHandler('user', user, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('user', userinfo, filters=Filters.chat(config.data.admin_chat)))
 dp.add_handler(CommandHandler('users', users, filters=Filters.chat(config.data.admin_chat)))
+
+def subscribe(update, context):
+    words = update.message.text.split()
+    try:
+        days = int(next(filter(str.isnumeric, words)))
+    except:
+        update.message.reply_text("Не указано количество дней")
+    else:
+        for usertag in filter(lambda w: w.startswith('@'), words):
+            user = db.get_user_by_username(usertag[1:])
+            sub = db.subscribe_user(user['id'], days)
+            update.message.reply_text(f"{user['username']} : {days}")
 
 
 
