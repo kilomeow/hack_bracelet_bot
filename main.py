@@ -503,6 +503,8 @@ def subscribe(update, context):
             update.message.reply_text(f"{user['username']} : {days}")
 
 
+dp.add_handler(CommandHandler('subscribe', subscribe, filters=Filters.chat(config.data.admin_chat)))
+
 
 def main():
     upd.start_polling()
