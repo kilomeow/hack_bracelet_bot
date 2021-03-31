@@ -92,6 +92,9 @@ def subscribe_user(id, days):
 def get_user(id):
     return db.users.find_one({"id": id})
 
+def get_user_by_username(username):
+    return db.users.find_one({"username": username})
+
 def check_subscription(id):
     user = get_user(id)
     if user:

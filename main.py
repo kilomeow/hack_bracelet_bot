@@ -120,8 +120,10 @@ subscription_end_message = "К сожалению, 30-дневная подпи�
 
 def subscription_info(sub):
     if sub["active"]:
-        return f"Ваша подписка будет действовать еще " +\
-            f"*{sub['days']} {'дней' if sub['days'] >= 5 else 'дня' if sub['days'] >=2 else 'день'}*"
+        last_digit = sub['days'] % 10
+        decade = (sub['days'] // 10) % 10
+        return f"Твоя подписка будет действовать еще " +\
+            f"*{sub['days']} {'дней' if last_digit in map(int, '056789') or decade == 1 else 'день' if last_digit == 1 and decade != 1 else 'дня'}*"
     else:
          return subscription_end_message
 
@@ -165,7 +167,7 @@ def ask_expert(update, context):
     questions = db.last_questions(update.message.from_user.id)
     if len(questions) < MAX_QUESTIONS:
         bot.send_message(chat_id=update.effective_chat.id,
-                     text="Выберите категорию специалиста, к которому вы хотите обратиться:",
+                     text="Выбери категорию специалиста, к которому хочешь обратиться:",
                      reply_markup=keyboard_from_list(categories+other+cancel))
         return CATEGORY
     else:
@@ -178,7 +180,7 @@ def ask_expert(update, context):
 
 def accept_category(update, context):
     context.user_data["category"] = update.message.text
-    update.message.reply_text("Введите и отправьте ваш вопрос:", 
+    update.message.reply_text("Введи и отправь свой вопрос:", 
                               reply_markup=keyboard_from_list(cancel))
     return QUESTION
 
@@ -197,7 +199,7 @@ def forward_to_expert(update, context):
                      parse_mode=ParseMode.MARKDOWN)
     forwarded = update.message.forward(config.data.experts_chat)
     db.add_new_question(category, update.message, forwarded)
-    update.message.reply_text("Спасибо, специалисты получили ваш вопрос и изучат его. ждите ответа в ближайшее время!")
+    update.message.reply_text("Спасибо, специалисты уже получили твой вопрос и изучат его. Жди ответа в ближайшее время!")
     return menu_again(update, context)
 
 
@@ -429,31 +431,65 @@ def remind_unanswered():
 upd.job_queue.run_daily(lambda c: remind_unanswered(), datetime.time(hour=12))
 
 ## admin tools
+
+import json
+
+def pretty_single(d):
+    if d is None: return str(None)
+    outd = d.copy()
+    if '_id' in outd.keys(): outd.pop('_id')
+    return json.dumps(outd, indent=2, sort_keys=True, ensure_ascii=False)
+
+def pretty(seq):
+    return "\n\n".join(map(pretty_single, seq))
+
 def say_chat_id(update, context):
     update.message.reply_text(update.message.chat_id)
 
 #dp.add_handler(CommandHandler('chatid', say_chat_id))
 
-
 def unanswered(update, context):
-    update.message.reply_text(f"```\n{db.unanswered_questions()}\n```",
+    update.message.reply_text(f"```\n{pretty(db.unanswered_questions())}\n```",
         parse_mode=ParseMode.MARKDOWN)
 
 dp.add_handler(CommandHandler('unanswered', unanswered, filters=Filters.chat(config.data.admin_chat)))
 dp.add_handler(CommandHandler('remind', lambda u, c: remind_unanswered(), filters=Filters.chat(config.data.admin_chat)))
 
 def remove_expert(update, context):
-    for username in filter(lambda w: w.startswith('@'), update.message.text.split()):
-        db.remove_expert(username)
+    for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
+        db.remove_expert(usertag[1:])
     update.message.reply_text('done')
 
 dp.add_handler(CommandHandler('remove', remove_expert, filters=Filters.chat(config.data.admin_chat)))
 
 def experts(update, context):
-    update.message.reply_text(f"```\n{db.all_experts()}\n```",
+    update.message.reply_text(f"```\n{pretty(db.all_experts())}\n```",
         parse_mode=ParseMode.MARKDOWN)
 
 dp.add_handler(CommandHandler('experts', experts, filters=Filters.chat(config.data.admin_chat)))
+
+def user(update, context):
+    for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
+        update.message.reply_text(f"```\n{pretty_single(db.get_user_by_username(usertag[1:]))}\n```",
+            parse_mode=ParseMode.MARKDOWN)
+
+def users(update, context):
+    users_list = list()
+    for raw_user in db.db.users.find():
+        user = {
+            'questions_amount': len(raw_user['questions']),
+            'registered': raw_user['registered'],
+            'username': raw_user['username'],
+            'subscription': db.check_subscription(raw_user['id'])
+        }
+        users_list.append(user)
+    for i in range(0, len(users_list), 5):
+        update.message.reply_text(f"```\n{pretty(users_list[i:i+5])}\n```",
+            parse_mode=ParseMode.MARKDOWN)
+
+dp.add_handler(CommandHandler('user', user, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('users', users, filters=Filters.chat(config.data.admin_chat)))
+
 
 
 def main():
