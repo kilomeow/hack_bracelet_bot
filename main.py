@@ -105,6 +105,17 @@ def menu_handler(menu_type, manually=False):
         return handler
     return wrapper
 
+
+# mentions
+
+def mention(username):
+    if not username.startswith("@"):
+        tag = "@"+username
+    else:
+        tag = username
+    return tag.replace("_", "\_")
+
+
 # hello and scubscription
 
 intro_message = "Привет, New Mama! Я твой помощник в общении с нашими экспертами. " +\
@@ -187,16 +198,16 @@ def accept_category(update, context):
 
 def remind_experts(category):
     experts_usernames = filter(bool, map(lambda d: d.get("username"), db.experts_within(category)))
-    experts_usertags = list(map(lambda un: "@"+un, experts_usernames))
-    return f"Обратите внимание: {' '.join(experts_usertags)} !" if experts_usertags else ""
+    experts_usertags = list(map(mention, experts_usernames))
+    return f"Обратите внимание: {' '.join(experts_usertags)} \!" if experts_usertags else ""
 
 def forward_to_expert(update, context):
     category = context.user_data["category"]
     
     bot.send_message(chat_id=config.data.experts_chat,
-                     text=f"Запрос категории *{category}*. " + \
+                     text=f"Запрос категории *{category}*\. " + \
                           remind_experts(category),
-                     parse_mode=ParseMode.MARKDOWN)
+                     parse_mode=ParseMode.MARKDOWN_V2)
     forwarded = update.message.forward(config.data.experts_chat)
     db.add_new_question(category, update.message, forwarded)
     update.message.reply_text("Спасибо, специалисты уже получили твой вопрос и изучат его. Жди ответа в ближайшее время!")
@@ -270,7 +281,7 @@ def contacts(update, context):
     update.message.reply_text(
                      text="\n\n".join(map(lambda d: d["info"], experts)),
                      parse_mode=ParseMode.MARKDOWN)
-    time.sleep(8)
+    time.sleep(3)
     return menu_again(update, context)
 
 
@@ -323,12 +334,12 @@ def proceed_feedback(update, context):
     update.message.forward(config.data.admin_chat)
     update.message.reply_text("Администраторы бота получили сообщение, спасибо! " +\
         "Мы свяжемся с вами при необходимости.")
-    time.sleep(5)
+    time.sleep(3)
     return menu_again(update, context)
 
 def wrong_feedback(update, context):
     update.message.reply_text("К сожалению я не могу отправить это. Сообщение должно быть текстовым")
-    time.sleep(5)
+    time.sleep(3)
     return menu_again(update, context)
 
 dp.add_handler(ConversationHandler(
@@ -419,9 +430,9 @@ def remind_unanswered():
         category_questions = list(filter(lambda q: q['category'] == category, questions))
         if category_questions:
             bot.send_message(chat_id=config.data.experts_chat,
-                             text=f"Вопросы без ответа категории *{category}*." +\
+                             text=f"Вопросы без ответа категории *{category}*\. " +\
                                   remind_experts(category),
-                             parse_mode=ParseMode.MARKDOWN)
+                             parse_mode=ParseMode.MARKDOWN_V2)
             for question in category_questions:
                 bot.forward_message(chat_id=config.data.experts_chat,
                                     from_chat_id=config.data.experts_chat,
@@ -431,6 +442,8 @@ def remind_unanswered():
 upd.job_queue.run_daily(lambda c: remind_unanswered(), datetime.time(hour=12))
 
 ## admin tools
+
+# info
 
 import json
 
@@ -472,6 +485,9 @@ def userinfo(update, context):
     for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
         update.message.reply_text(f"```\n{pretty_single(db.get_user_by_username(usertag[1:]))}\n```",
             parse_mode=ParseMode.MARKDOWN)
+    for user_id in filter(str.isnumeric, update.message.text.split()):
+        update.message.reply_text(f"```\n{pretty_single(db.get_user(int(user_id)))}\n```",
+            parse_mode=ParseMode.MARKDOWN)
 
 def users(update, context):
     users_list = list()
@@ -499,12 +515,27 @@ def subscribe(update, context):
     else:
         for usertag in filter(lambda w: w.startswith('@'), words):
             user = db.get_user_by_username(usertag[1:])
-            sub = db.subscribe_user(user['id'], days)
+            db.subscribe_user(user['id'], days)
             update.message.reply_text(f"{user['username']} : {days}")
 
 
 dp.add_handler(CommandHandler('subscribe', subscribe, filters=Filters.chat(config.data.admin_chat)))
 
+# error logging
+
+def report_error(update, context):
+    bot.send_message(chat_id=config.data.admin_chat,
+        text=f"Error: `{context.error}`\n" +
+             f"Update: ```\n{update}\n```",
+        parse_mode=ParseMode.MARKDOWN_V2)
+
+def handle_error(update, context):
+    if update.effective_message:
+        update.effective_message.reply_text("При обработке этого запроса в боте произошла ошибка. "+
+        "Разработчики уже уведомлены! Свяжетись с администратором если это что-то критичное.")
+    report_error(update, context)
+
+dp.add_error_handler(handle_error)
 
 def main():
     upd.start_polling()
