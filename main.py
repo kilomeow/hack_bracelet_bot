@@ -250,14 +250,18 @@ def reply_to_user(update, context):
     else:
         forwarded = update.message.reply_to_message
         chat_asked_id = forwarded.forward_from.id
-        db.add_answer(forwarded.message_id, update.message)
+        db.add_answer(forwarded.message_id,
+                      update.message)
         bot.send_message(chat_id=chat_asked_id,
-                         text="*Ответ специалиста:*\n"+update.message.text,
-                         parse_mode=ParseMode.MARKDOWN)
+                         text="<b>Ответ специалиста:</b>\n"+update.message.text,
+                         parse_mode=ParseMode.HTML)
+        time.sleep(0.3)
         bot.send_message(chat_id=chat_asked_id,
-                         text="*Информация о специалисте:*\n"+expert["info"],
+                         text="<b>Информация о специалисте:</b>\n"+expert["info"],
                          reply_markup=ok_keyboard(f'read_{update.message.message_id}'),
-                         parse_mode=ParseMode.MARKDOWN)
+                         parse_mode=ParseMode.HTML)
+        time.sleep(0.3)
+        update.message.reply_text("Ваш ответ отправлен пользователю")
 
 
 dp.add_handler(MessageHandler(Filters.chat(int(config.data.experts_chat)) & ReplyToBotForwardedFilter, reply_to_user))
@@ -267,7 +271,6 @@ def get_answer(update, context):
     data = update.callback_query.data
     if data.startswith('read'):
         db.check_read_answer(int(data.split('_')[1]))
-    print(int(data.split('_')[1]))
     show_menu(update.effective_chat.id)
 
 dp.add_handler(CallbackQueryHandler(get_answer, pattern="^read"))
@@ -278,9 +281,7 @@ dp.add_handler(CallbackQueryHandler(get_answer, pattern="^read"))
 @menu_handler('contacts')
 def contacts(update, context):
     experts = db.all_experts()
-    update.message.reply_text(
-                     text="\n\n".join(map(lambda d: d["info"], experts)),
-                     parse_mode=ParseMode.MARKDOWN)
+    update.message.reply_text(text="\n\n".join(map(lambda d: d["info"], experts)))
     time.sleep(3)
     return menu_again(update, context)
 
@@ -434,9 +435,10 @@ def remind_unanswered():
                                   remind_experts(category),
                              parse_mode=ParseMode.MARKDOWN_V2)
             for question in category_questions:
-                bot.forward_message(chat_id=config.data.experts_chat,
-                                    from_chat_id=config.data.experts_chat,
-                                    message_id=question['forwarded_id'])
+                forwarded = bot.forward_message(chat_id=config.data.experts_chat,
+                                from_chat_id=config.data.experts_chat,
+                                message_id=question['forwarded_ids'][0])
+                db.add_question_forward(question['from_user'], question['message_id'], forwarded)
 
 
 upd.job_queue.run_daily(lambda c: remind_unanswered(), datetime.time(hour=12))
@@ -461,25 +463,29 @@ def say_chat_id(update, context):
 
 #dp.add_handler(CommandHandler('chatid', say_chat_id))
 
+# commands
+
+AdminChat = Filters.chat(config.data.admin_chat)
+
 def unanswered(update, context):
     update.message.reply_text(f"```\n{pretty(db.unanswered_questions())}\n```",
         parse_mode=ParseMode.MARKDOWN)
 
-dp.add_handler(CommandHandler('unanswered', unanswered, filters=Filters.chat(config.data.admin_chat)))
-dp.add_handler(CommandHandler('remind', lambda u, c: remind_unanswered(), filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('unanswered', unanswered, filters=AdminChat))
+dp.add_handler(CommandHandler('remind', lambda u, c: remind_unanswered(), filters=AdminChat))
 
 def remove_expert(update, context):
     for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
         db.remove_expert(usertag[1:])
     update.message.reply_text('done')
 
-dp.add_handler(CommandHandler('remove', remove_expert, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('remove', remove_expert, filters=AdminChat))
 
 def experts(update, context):
     update.message.reply_text(f"```\n{pretty(db.all_experts())}\n```",
         parse_mode=ParseMode.MARKDOWN)
 
-dp.add_handler(CommandHandler('experts', experts, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('experts', experts, filters=AdminChat))
 
 def userinfo(update, context):
     for usertag in filter(lambda w: w.startswith('@'), update.message.text.split()):
@@ -503,8 +509,8 @@ def users(update, context):
         update.message.reply_text(f"```\n{pretty(users_list[i:i+5])}\n```",
             parse_mode=ParseMode.MARKDOWN)
 
-dp.add_handler(CommandHandler('user', userinfo, filters=Filters.chat(config.data.admin_chat)))
-dp.add_handler(CommandHandler('users', users, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('user', userinfo, filters=AdminChat))
+dp.add_handler(CommandHandler('users', users, filters=AdminChat))
 
 def subscribe(update, context):
     words = update.message.text.split()
@@ -519,7 +525,22 @@ def subscribe(update, context):
             update.message.reply_text(f"{user['username']} : {days}")
 
 
-dp.add_handler(CommandHandler('subscribe', subscribe, filters=Filters.chat(config.data.admin_chat)))
+dp.add_handler(CommandHandler('subscribe', subscribe, filters=AdminChat))
+
+def delete_question(update, context):
+    user_id, message_id = list(map(int, filter(str.isnumeric, update.message.text.split())))
+    deleted = db.delete_question_by_original(user_id, message_id)
+    if deleted:
+        update.message.reply_text(f'deleted `{user_id}:{message_id}`', parse_mode=ParseMode.MARKDOWN)
+    else:
+        update.message.reply_text(f'not found `{user_id}:{message_id}`', parse_mode=ParseMode.MARKDOWN)
+
+def delete_by_forwarded_ids(update, context):
+    db.delete_questions(map(int, filter(str.isnumeric, update.message.text.split())))
+    update.message.reply_text('done')
+
+dp.add_handler(CommandHandler('delete_question', delete_question, filters=AdminChat))
+dp.add_handler(CommandHandler('delete_by_forwarded', delete_by_forwarded_ids, filters=AdminChat))
 
 # error logging
 

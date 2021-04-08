@@ -24,6 +24,14 @@ def update_expert(user, categories, info):
 def remove_expert(username):
     db.experts.delete_one({"username": username})
 
+def delete_questions(forwarded_ids):
+    db.questions.delete({"forwarded_ids": {"$in": forwarded_ids}})
+
+def delete_question_by_original(original_user_id, original_id):
+    result = db.questions.delete_one({"from_user": original_user_id,
+                                      "message_id": original_id})
+    return result.deleted_count
+
 def experts_within(category):
     return list(db.experts.find({"categories": category}))
 
@@ -56,12 +64,16 @@ def add_new_question(category, message, forwarded):
     q = question(category, message.text, message.message_id, message.from_user.id)
     db.users.update_one({"id": q["from_user"]},
                         {"$push": {"questions": q}})
-    q.update({"answers": [], "forwarded_id": forwarded.message_id})
+    q.update({"answers": [], "forwarded_ids": [forwarded.message_id]})
     db.questions.insert_one(q)
 
+def add_question_forward(original_user_id, original_id, forwarded):
+    db.questions.update_one({"from_user": original_user_id,
+                             "message_id": original_id},
+                            {"$push": {"forwarded_ids": forwarded.message_id}})
+
 def add_answer(forwarded_id, answer):
-    print('answer', forwarded_id, answer)
-    db.questions.update_one({"forwarded_id": forwarded_id},
+    db.questions.update_one({"forwarded_ids": forwarded_id},
                             {"$push": {"answers": {"id": answer.message_id,
                                                    "text": answer.text}
                                       }})
