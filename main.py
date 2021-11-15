@@ -27,15 +27,12 @@ import datetime
 def hello(update, context):
     bot.send_message(chat_id=update.effective_chat.id,
                     text="""
-Чобы попасть на наше мероприятие, мы просим вас ответить на три вопроса:
+Прежде чем пригласить на онлайн-коворкинг, нам интересно узнать:
 
-1) Как к вам лучше обратиться?
++ Как к вам лучше обратиться?
++ Над чем вы хотите работать на коворкинге?
 
-2) Когда вы хотите прийти? В субботу на лекции и знакомство, в воскресенье мастерить браслет, или на оба дня?
-
-3) Есть ли в вашей жизни какая-то веселая практика связанная с экологией? Или возможно вы мечтаете такую найти?
-
-Отвечайте сообщением здесь в боте, сохраняя нумерацию""")
+Отвечайте сообщением здесь в боте""")
 
 dp.add_handler(CommandHandler('start', hello))
 
@@ -64,7 +61,7 @@ def accept_user(update, context):
     update.callback_query.answer()
     try:
         bot.send_message(chat_id=user_id,
-                        text=f'Заходи в <a href="{config.data.invite_link}">чат</a> ✨ ',
+                        text=f'Отлично! Приходите на наш коворкинг в 14.00. Ссылку отправим в <a href="{config.data.invite_link}">чат</a> ✨ ',
                         parse_mode=ParseMode.HTML)
     except:
         update.message.reply_text("Ответ не дошел пользователю")
